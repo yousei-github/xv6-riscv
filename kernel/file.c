@@ -16,17 +16,17 @@
 struct devsw devsw[NDEV];
 struct {
   struct spinlock lock;
-  struct file file[NFILE];
+  //struct file file[NFILE];  // commented for lab: Allocator for xv6
 } ftable;
 
-void
+/*void
 fileinit(void)
 {
   initlock(&ftable.lock, "ftable");
-}
+}*/
 
 // Allocate a file structure.
-struct file*
+/*struct file*
 filealloc(void)
 {
   struct file *f;
@@ -41,7 +41,7 @@ filealloc(void)
   }
   release(&ftable.lock);
   return 0;
-}
+}*/
 
 // Increment ref count for file f.
 struct file*
@@ -56,7 +56,7 @@ filedup(struct file *f)
 }
 
 // Close file f.  (Decrement ref count, close when reaches 0.)
-void
+/*void
 fileclose(struct file *f)
 {
   struct file ff;
@@ -80,7 +80,7 @@ fileclose(struct file *f)
     iput(ff.ip);
     end_op();
   }
-}
+}*/
 
 // Get metadata about file f.
 // addr is a user virtual address, pointing to a struct stat.
@@ -166,10 +166,10 @@ filewrite(struct file *f, uint64 addr, int n)
       iunlock(f->ip);
       end_op();
 
-      if(r != n1){
-        // error from writei
+      if(r < 0)
         break;
-      }
+      if(r != n1)
+        panic("short filewrite");
       i += r;
     }
     ret = (i == n ? n : -1);
@@ -180,3 +180,68 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+
+// below is used for lab: Allocator for xv6
+#include "memlayout.h"
+
+extern void *bd_malloc(uint64 nbytes);
+extern void bd_free(void *p);
+
+
+void fileinit(void)
+{
+  initlock(&ftable.lock, "ftable");
+}
+
+// Allocate a file structure.
+struct file *filealloc(void)
+{
+  struct file *f;
+  uint size;
+  acquire(&ftable.lock);
+  
+  size = sizeof(struct file);
+  f = (struct file*) bd_malloc(size);
+  if (f != 0)
+  {
+    f->ref = 1;
+    release(&ftable.lock);
+    return f;
+  }
+
+  release(&ftable.lock);
+  return 0;
+  
+}
+
+// Close file f.  (Decrement ref count, close when reaches 0.)
+void fileclose(struct file *f)
+{
+  struct file ff;
+
+  acquire(&ftable.lock);
+  if (f->ref < 1)
+    panic("fileclose");
+  if (--f->ref > 0)
+  {
+    release(&ftable.lock);
+    return;
+  }
+
+  ff = *f;
+  f->ref = 0;
+  f->type = FD_NONE;
+  bd_free(f);
+  release(&ftable.lock);
+
+  if (ff.type == FD_PIPE)
+  {
+    pipeclose(ff.pipe, ff.writable);
+  }
+  else if (ff.type == FD_INODE || ff.type == FD_DEVICE)
+  {
+    begin_op();
+    iput(ff.ip);
+    end_op();
+  }
+}
